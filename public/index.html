@@ -57,6 +57,17 @@
         <span class="blend-end">FPI</span>
         <output id="weightOut">80 / 20</output>
       </div>
+      <div class="strategy">
+        <span class="tb-label" id="goalLabel">Goal</span>
+        <div class="seg" id="strategy" role="radiogroup" aria-labelledby="goalLabel">
+          <button role="radio" data-strategy="points" aria-checked="true" title="Most expected points: best for season-long standings">Max points</button>
+          <button role="radio" data-strategy="win" aria-checked="false" title="Highest chance of beating everyone in your pool this week">Win the week</button>
+        </div>
+        <label class="pool-size" id="poolWrap" hidden>
+          <input id="poolSize" type="number" min="2" max="500" value="20" inputmode="numeric" />
+          <span>entries</span>
+        </label>
+      </div>
       <div class="toolbar-actions">
         <button class="btn ghost" id="resetBtn" title="Clear locks, flips and overrides for this week">Reset tweaks</button>
         <button class="btn ghost" id="copyBtn">Copy picks</button>
@@ -74,10 +85,18 @@
         Market lines are de-vigged moneylines; FPI is ESPN's model. Lock a pick you've already submitted,
         flip a game to take the underdog, or tune any probability — everything re-optimizes instantly.
       </p>
+      <p>
+        <b>Win the week</b> plays against your pool instead of the odds. It simulates thousands of weeks with a field of
+        opponents who mostly follow the lines, then finds the picks that most often finish first — usually by backing
+        a well-chosen underdog with real points, so you gain when everyone else loses. It trades a few expected points
+        for a better shot at the weekly prize; for season-long totals, stick with max points.
+      </p>
       <p class="legend">
         <span class="flag">coin flip</span> favorite under 55%
         <span class="flag warn">FPI disagrees</span> model and market differ by 10+ pts
         <span class="flag hot">FPI picks other side</span> they favor different teams
+        <span class="flag hot">contrarian</span> underdog chosen to separate from your pool
+        <span class="inj-chip legend-chip">✚ BUF 2<i>·</i>MIA 1</span> injury report: red if your pick has a starter out
       </p>
     </footer>
   </main>

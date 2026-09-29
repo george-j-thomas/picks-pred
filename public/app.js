@@ -1,4 +1,5 @@
-import { assign, summarize } from "./optimize.js";
+import { assign, blend, summarize } from "./optimize.js";
+import { hashSeed } from "./pool.js";
 
 const $ = (sel) => document.querySelector(sel);
 const LS = {
@@ -15,7 +16,9 @@ const ICONS = {
   lock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/></svg>',
   flip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h14l-4-4M20 16H6l4 4"/></svg>',
   tune: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>',
+  cross: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M9 3h6v6h6v6h-6v6H9v-6H3V9h6z"/></svg>',
 };
+const INJ_ABBR = { Out: "OUT", Doubtful: "DBT", "Injured Reserve": "IR", Questionable: "Q" };
 
 const state = {
   season: null, type: 2, week: null,
@@ -24,8 +27,13 @@ const state = {
   apiKey: LS.get("apiKey", ""),
   books: LS.get("books", []),
   maxPoints: LS.get("maxPoints", null),
+  strategy: LS.get("strategy", "points"),
+  poolSize: LS.get("poolSize", 20),
+  pool: { cache: new Map(), pending: null, error: null },
+  injuries: null,
   tweaks: { locks: {}, forced: {}, overrides: {} },
   open: new Set(),
+  injOpen: new Set(),
   last: null,
 };
 
@@ -87,11 +95,15 @@ async function load({ keepTweaks = false } = {}) {
     state.type = body.season_type;
     state.week = body.week;
     state.tweaks = { locks: {}, forced: {}, overrides: {}, ...LS.get(weekKey(), {}) };
-    if (!keepTweaks) state.open.clear();
+    if (!keepTweaks) {
+      state.open.clear();
+      state.injOpen.clear();
+    }
     history.replaceState(null, "", `?season=${state.season}&type=${state.type}&week=${state.week}`);
     state.fresh = !keepTweaks;
     render();
     if (keepTweaks) toast("Lines refreshed");
+    loadInjuries(keepTweaks);
   } catch (err) {
     if (err.body?.calendar) {
       state.data = { ...err.body, games: [] };
@@ -106,6 +118,19 @@ async function load({ keepTweaks = false } = {}) {
   }
 }
 
+async function loadInjuries(force = false) {
+  if (!state.data?.games.some((g) => !g.completed)) return;
+  if (state.injuries && !force && Date.now() - state.injuries.fetched < 10 * 60e3) return;
+  try {
+    const res = await fetch("/api/injuries");
+    if (!res.ok) return;
+    state.injuries = { ...(await res.json()), fetched: Date.now() };
+    if (state.last) renderLadder(state.last.picks);
+  } catch {
+    /* injuries are context only; the picks work without them */
+  }
+}
+
 function saveTweaks() {
   const t = state.tweaks;
   const empty = !Object.keys(t.locks).length && !Object.keys(t.forced).length && !Object.keys(t.overrides).length;
@@ -114,21 +139,103 @@ function saveTweaks() {
 
 /* ---------------- render ---------------- */
 function render() {
-  const { picks, errors } = assign(state.data.games, {
+  const opts = {
     weights: state.weights,
     maxPoints: state.maxPoints,
     locks: state.tweaks.locks,
     forced: state.tweaks.forced,
     overrides: state.tweaks.overrides,
-  });
+  };
+  const base = assign(state.data.games, opts);
+  let { picks } = base;
+  const errors = [...base.errors];
+  let pool = null;
+  if (state.strategy === "win") {
+    pool = poolResult(base.picks);
+    if (pool?.changed) {
+      const plan = Object.fromEntries(
+        pool.plan.map((x) => {
+          const g = state.data.games.find((gm) => gm.id === x.id);
+          return [x.id, { team: x.home ? g.home.abbr : g.away.abbr, points: x.points }];
+        }),
+      );
+      picks = assign(state.data.games, { ...opts, plan }).picks;
+    }
+    if (state.pool.error) errors.push(`Pool simulation failed: ${state.pool.error}`);
+  }
   const summary = summarize(picks);
-  state.last = { picks, summary };
+  const baseSummary = picks === base.picks ? summary : summarize(base.picks);
+  state.last = { picks, summary, pool, baseSummary };
   renderWeeks();
+  renderStrategy();
   renderHero(picks, summary);
   renderDist(summary);
   renderLadder(picks);
   renderSourcesState();
   renderNotices(errors);
+}
+
+/* ---------------- win-the-week ---------------- */
+let worker = null;
+
+// Cached result for the current inputs, or null after kicking off the simulation.
+function poolResult(basePicks) {
+  const input = {
+    entries: Math.max(1, state.poolSize - 1),
+    seed: hashSeed(`${state.season}-${state.type}-${state.week}`),
+    games: basePicks.map((p) => ({
+      id: p.game.id,
+      q: p.isHome ? p.winProb : 1 - p.winProb,
+      // Your pool sees the lines, not your overrides.
+      m: blend(p.game, state.weights).final ?? 0.5,
+      home: p.isHome,
+      points: p.points,
+      fixedSide: p.locked || p.forced,
+      fixedPoints: p.locked,
+    })),
+  };
+  const key = JSON.stringify(input);
+  const hit = state.pool.cache.get(key);
+  if (hit) return hit;
+  if (state.pool.pending !== key) {
+    state.pool.pending = key;
+    state.pool.error = null;
+    try {
+      if (!worker) {
+        worker = new Worker(new URL("./pool-worker.js", import.meta.url), { type: "module" });
+        worker.onmessage = onPoolResult;
+        worker.onerror = (e) => onPoolResult({ data: { key: state.pool.pending, error: e.message || "worker error" } });
+      }
+      worker.postMessage({ key, input });
+    } catch (err) {
+      state.pool.error = err.message;
+    }
+  }
+  return null;
+}
+
+function onPoolResult({ data }) {
+  const { key, result, error } = data;
+  if (result) {
+    state.pool.cache.set(key, result);
+    if (state.pool.cache.size > 40) state.pool.cache.delete(state.pool.cache.keys().next().value);
+  }
+  if (state.pool.pending === key) {
+    state.pool.pending = null;
+    state.pool.error = error ?? null;
+    if (state.data?.games.length && state.strategy === "win") render();
+  }
+}
+
+function renderStrategy() {
+  for (const b of document.querySelectorAll("[data-strategy]")) {
+    const on = b.dataset.strategy === state.strategy;
+    b.classList.toggle("on", on);
+    b.setAttribute("aria-checked", on);
+  }
+  $("#poolWrap").hidden = state.strategy !== "win";
+  $("#poolSize").value = state.poolSize;
+  document.body.classList.toggle("win-mode", state.strategy === "win");
 }
 
 function renderSkeleton() {
@@ -169,21 +276,41 @@ function renderHero(picks, s) {
   eb.textContent = done ? "Final" : live ? "Live now" : started ? "In progress" : "Upcoming";
   eb.className = `eyebrow${live ? " live" : ""}`;
 
-  const title = state.type === 3 ? esc(entry?.label ?? `Round ${state.week}`) : `Week <span class="num">${state.week}</span>`;
+  const title = state.type === 3 ? esc(entry?.label ?? `Round ${state.week}`) : `Week&nbsp;<span class="num">${state.week}</span>`;
   $("#weekTitle").innerHTML = title;
   const books = new Set(games.flatMap((g) => g.sources.map((x) => x.label)));
   $("#weekMeta").innerHTML = `${esc(entry?.detail ?? "")} · ${games.length} games<br>${esc([...books].join(" · ") || "no sources")}`;
 
-  const stats = [
-    `<div class="stat big"><div class="k">Expected points</div><div class="v">${s.expected.toFixed(1)}<small>/ ${s.max}</small></div>
-       <div class="sub">80% of outcomes: ${s.p10}–${s.p90} · σ ${s.sd.toFixed(1)}</div></div>`,
-    `<div class="stat"><div class="k">Expected correct</div><div class="v">${s.expectedWins.toFixed(1)}<small>/ ${picks.length}</small></div></div>`,
-  ];
+  const pool = state.last.pool;
+  const win = state.strategy === "win";
+  const stats = [];
+  if (win) {
+    const n = state.poolSize;
+    const avg = `average entry ${pct(1 / n)}%`;
+    stats.push(pool
+      ? `<div class="stat big"><div class="k">Chance to win the week</div><div class="v">${pct(pool.pWin)}<small>%</small></div>
+          <div class="sub">${pool.changed ? `max-points picks: ${pct(pool.pWinBase)}%` : "max-points picks are already your best shot"} · ${avg}</div></div>`
+      : `<div class="stat big pending"><div class="k">Chance to win the week</div><div class="v">—</div>
+          <div class="sub">Simulating a ${n}-entry pool…</div></div>`);
+    const diff = s.expected - state.last.baseSummary.expected;
+    stats.push(`<div class="stat"><div class="k">Expected points</div><div class="v">${s.expected.toFixed(1)}<small>/ ${s.max}</small></div>
+      <div class="sub">${Math.abs(diff) < 0.05 ? "same as max points" : `${diff.toFixed(1)} vs max points`}</div></div>`);
+  } else {
+    stats.push(
+      `<div class="stat big"><div class="k">Expected points</div><div class="v">${s.expected.toFixed(1)}<small>/ ${s.max}</small></div>
+         <div class="sub">80% of outcomes: ${s.p10}–${s.p90} · σ ${s.sd.toFixed(1)}</div></div>`,
+      `<div class="stat"><div class="k">Expected correct</div><div class="v">${s.expectedWins.toFixed(1)}<small>/ ${picks.length}</small></div></div>`,
+    );
+  }
   if (s.actual != null) {
     const sub = done
       ? `${s.correct}/${s.decided} correct · better than ${Math.round((1 - (s.pctAtLeast ?? 0)) * 100)}% of outcomes`
       : `${s.correct}/${s.decided} decided so far`;
     stats.push(`<div class="stat actual"><div class="k">${done ? "Actual score" : "Banked"}</div><div class="v">${s.actual}</div><div class="sub">${sub}</div></div>`);
+  } else if (win) {
+    const upsets = picks.filter((p) => p.winProb < 0.5).length;
+    stats.push(`<div class="stat"><div class="k">Underdog picks</div><div class="v">${upsets}</div>
+      <div class="sub">${pool ? `winner usually scores ~${pool.winningScore}` : "&nbsp;"}</div></div>`);
   } else {
     const locks = picks.filter((p) => p.locked).length;
     stats.push(`<div class="stat"><div class="k">Coin flips</div><div class="v">${picks.filter((p) => p.flags.includes("coin flip")).length}</div>
@@ -210,6 +337,8 @@ function renderDist(s) {
     return `<line class="mark ${cls}" x1="${x}" x2="${x}" y1="12" y2="${H}"/><text class="mark-label ${cls}" x="${x}" y="6" text-anchor="${anchor}">${label}</text>`;
   };
   out += mark(s.expected, "", `EXP ${s.expected.toFixed(0)}`);
+  const pool = state.last.pool;
+  if (state.strategy === "win" && pool && pool.winningScore < n) out += mark(pool.winningScore, "win", `TO WIN ~${pool.winningScore}`);
   if (s.actual != null && state.data.games.every((g) => g.completed)) out += mark(s.actual, "actual", `ACTUAL ${s.actual}`);
   svg.innerHTML = out;
   $("#distAxis").innerHTML = `<span>0</span><span>${Math.round((n - 1) / 2)}</span><span>${n - 1} pts</span>`;
@@ -225,7 +354,7 @@ function kickoffParts(g) {
 }
 
 function flagClass(f) {
-  if (f === "FPI picks other side" || f === "NO DATA" || f === "upset pick") return "flag hot";
+  if (f === "FPI picks other side" || f === "NO DATA" || f === "upset pick" || f === "contrarian") return "flag hot";
   if (f === "FPI disagrees" || f === "already started") return "flag warn";
   if (f === "override") return "flag volt";
   return "flag";
@@ -238,7 +367,7 @@ function rowHtml(p, i, n) {
   const k = kickoffParts(g);
   const decided = g.completed && g.winner;
   const won = decided && (g.winner === "home") === p.isHome;
-  const rowCls = ["row", decided ? (won ? "won" : "lost") : ""].join(" ");
+  const rowCls = ["row", decided ? (won ? "won" : "lost") : "", p.flags.includes("contrarian") ? "contra" : ""].join(" ");
   const ptsCls = ["pts", p.points > n - 3 ? "top" : "", p.winProb < 0.58 ? "low" : ""].join(" ");
   const score = g.home.score != null ? `${g.away.abbr} ${g.away.score} – ${g.home.score} ${g.home.abbr}` : "";
 
@@ -250,7 +379,7 @@ function rowHtml(p, i, n) {
   } else {
     when = `<b>${k.day} ${k.time}</b><div>${k.date}</div>`;
   }
-  const flags = p.flags.map((f) => `<span class="${flagClass(f)}">${esc(f)}</span>`).join("");
+  const flags = injuryFlags(p) + p.flags.map((f) => `<span class="${flagClass(f)}">${esc(f)}</span>`).join("");
   const srcs = g.sources
     .map((s) => `<span>${esc(s.label)} <b>${pct(p.isHome ? s.home_prob : 1 - s.home_prob)}%</b></span>`)
     .join("");
@@ -283,6 +412,7 @@ function rowHtml(p, i, n) {
       <button class="act${p.forced ? " on" : ""}" data-act="flip" title="Pick ${esc(p.opp.abbr)} instead" aria-pressed="${p.forced}">${ICONS.flip}</button>
       <button class="act${state.open.has(g.id) || override != null ? " on" : ""}" data-act="tune" title="Adjust win probability" aria-expanded="${state.open.has(g.id)}">${ICONS.tune}</button>
     </div>
+    ${state.injOpen.has(g.id) && state.injuries ? injuryPanel(p) : ""}
     ${state.open.has(g.id) ? `
     <div class="tune">
       <span class="tune-team">${logoImg(g.away, "")}${esc(g.away.abbr)} <output data-away>${100 - homeVal}%</output></span>
@@ -291,6 +421,53 @@ function rowHtml(p, i, n) {
       <div class="srcs">${srcs}${override != null ? '<button class="btn ghost small" data-act="clear">Reset to model</button>' : ""}</div>
     </div>` : ""}
   </article>`;
+}
+
+/* ---------------- injuries ---------------- */
+const teamInjuries = (abbr) => state.injuries?.teams?.[abbr] ?? [];
+const isKeyInjury = (x) => x.starter && (x.status !== "Questionable" || x.pos === "QB");
+const injSlug = (status) => INJ_ABBR[status]?.toLowerCase() ?? "q";
+
+function injuryFlags(p) {
+  if (!state.injuries || p.game.completed) return "";
+  const mine = teamInjuries(p.team.abbr);
+  const theirs = teamInjuries(p.opp.abbr);
+  if (!mine.length && !theirs.length) return "";
+  const cls = mine.some(isKeyInjury) ? "hot" : theirs.some(isKeyInjury) ? "warn" : "";
+  const keys = [...mine.filter(isKeyInjury), ...theirs.filter(isKeyInjury)];
+  const title = keys.length
+    ? `Key: ${keys.map((x) => `${x.short} (${x.pos}, ${x.status})`).join(", ")}`
+    : "No starters listed";
+  const qbs = [p.team, p.opp].flatMap((t) =>
+    teamInjuries(t.abbr).filter((x) => x.pos === "QB" && x.starter).map((x) => ({ ...x, team: t.abbr })),
+  );
+  const open = state.injOpen.has(p.game.id);
+  return (
+    `<button class="inj-chip ${cls}${open ? " on" : ""}" data-act="inj" title="${esc(title)}" aria-expanded="${open}">` +
+    `${ICONS.cross}${esc(p.team.abbr)} ${mine.length}<i>·</i>${esc(p.opp.abbr)} ${theirs.length}</button>` +
+    qbs.map((x) => `<span class="flag hot" title="${esc(x.comment)}">QB ${esc(x.short)} ${INJ_ABBR[x.status]}</span>`).join("")
+  );
+}
+
+function injuryPanel(p) {
+  const col = (team, label) => {
+    const list = teamInjuries(team.abbr);
+    const items = list.length
+      ? list.map((x) => {
+          const back = x.return_date ? ` · est. return ${new Date(`${x.return_date}T12:00`).toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : "";
+          return `<li class="inj-${injSlug(x.status)}${isKeyInjury(x) ? " key" : ""}" title="${esc(x.comment + back)}">
+            <span class="inj-st">${INJ_ABBR[x.status]}</span><span class="inj-pos">${esc(x.pos)}</span>
+            <span class="inj-name">${esc(x.name)}${x.starter ? "<em>starter</em>" : ""}</span>
+            <span class="inj-what">${esc(x.injury)}</span></li>`;
+        }).join("")
+      : '<li class="inj-none">Nothing on the report</li>';
+    return `<div class="inj-col"><h4>${logoImg(team, "")}${esc(team.abbr)} <small>${label}</small></h4><ul>${items}</ul></div>`;
+  };
+  const updated = state.injuries.updated
+    ? new Date(state.injuries.updated).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })
+    : "recently";
+  return `<div class="inj-panel">${col(p.team, "your pick")}${col(p.opp, "opponent")}
+    <p class="inj-note">Current ESPN injury report · updated ${esc(updated)}. Betting lines already move on this news; "starter" is per ESPN's depth chart, where injured players often drop down.</p></div>`;
 }
 
 function renderLadder(picks) {
@@ -372,14 +549,14 @@ $("#ladder").addEventListener("click", (e) => {
       if (t.locks[id]) delete t.locks[id];
       else t.locks[id] = { team: pick.team.abbr, points: pick.points };
       break;
-    case "flip": {
-      const other = pick.opp.abbr;
-      if (t.locks[id]) t.locks[id].team = other;
-      const favorite = blendFavorite(pick);
-      if (other === favorite) delete t.forced[id];
-      else t.forced[id] = other;
+    case "flip":
+      if (t.locks[id]) t.locks[id].team = pick.opp.abbr;
+      if (t.forced[id]) delete t.forced[id];
+      else t.forced[id] = pick.opp.abbr;
       break;
-    }
+    case "inj":
+      state.injOpen.has(id) ? state.injOpen.delete(id) : state.injOpen.add(id);
+      break;
     case "tune":
       state.open.has(id) ? state.open.delete(id) : state.open.add(id);
       break;
@@ -390,12 +567,6 @@ $("#ladder").addEventListener("click", (e) => {
   saveTweaks();
   render();
 });
-
-// The team the model would pick with no forcing, so flipping back clears the tweak.
-function blendFavorite(pick) {
-  const { picks } = assign([pick.game], { weights: state.weights, overrides: state.tweaks.overrides });
-  return picks[0].team.abbr;
-}
 
 $("#ladder").addEventListener("input", (e) => {
   if (!e.target.matches("[data-tune]")) return;
@@ -454,6 +625,22 @@ weight.addEventListener("input", () => {
   if (state.data?.games.length) render();
 });
 
+$("#strategy").addEventListener("click", (e) => {
+  const b = e.target.closest("[data-strategy]");
+  if (!b || b.dataset.strategy === state.strategy) return;
+  state.strategy = b.dataset.strategy;
+  LS.set("strategy", state.strategy);
+  if (state.data?.games.length) render();
+  else renderStrategy();
+});
+$("#poolSize").addEventListener("change", (e) => {
+  const v = Math.round(Number(e.target.value));
+  state.poolSize = Number.isFinite(v) ? Math.min(Math.max(v, 2), 500) : 20;
+  LS.set("poolSize", state.poolSize);
+  if (state.data?.games.length) render();
+  else renderStrategy();
+});
+
 $("#runBtn").addEventListener("click", () => load({ keepTweaks: true }));
 $("#resetBtn").addEventListener("click", () => {
   state.tweaks = { locks: {}, forced: {}, overrides: {} };
@@ -468,7 +655,10 @@ $("#copyBtn").addEventListener("click", async () => {
     (p) => `${String(p.points).padStart(2)}  ${p.team.abbr.padEnd(4)} ${p.isHome ? "vs" : "@ "} ${p.opp.abbr.padEnd(4)} ${pct(p.winProb, 0)}%`,
   );
   const title = state.type === 3 ? "Postseason" : `Week ${state.week}`;
-  const text = `${state.season} ${title} picks\n${lines.join("\n")}\nExpected ${state.last.summary.expected.toFixed(1)} / ${state.last.summary.max}`;
+  const goal = state.strategy === "win" && state.last.pool
+    ? `\nWin-the-week picks for a ${state.poolSize}-entry pool (${pct(state.last.pool.pWin)}% to win)`
+    : "";
+  const text = `${state.season} ${title} picks\n${lines.join("\n")}\nExpected ${state.last.summary.expected.toFixed(1)} / ${state.last.summary.max}${goal}`;
   try {
     await navigator.clipboard.writeText(text);
     toast("Picks copied");
@@ -530,4 +720,5 @@ if (params.get("week")) {
   state.season = Number(params.get("season")) || null;
 }
 syncWeight();
+renderStrategy();
 load();

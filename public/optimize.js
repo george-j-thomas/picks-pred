@@ -23,7 +23,8 @@ export function blend(game, weights, overrideHome = null) {
 /**
  * Pick a winner and unique confidence value for each game.
  * opts: {weights, maxPoints, locks: {gameId: {team, points}}, forced: {gameId: abbr},
- *        overrides: {gameId: homeProb}}
+ *        overrides: {gameId: homeProb}, plan: {gameId: {team, points}}}
+ * `plan` (from the win-the-week search) sets a pick and its points without locking it.
  * Returns {picks, errors}.
  */
 export function assign(games, opts = {}) {
@@ -31,11 +32,13 @@ export function assign(games, opts = {}) {
   const locks = opts.locks ?? {};
   const forced = opts.forced ?? {};
   const overrides = opts.overrides ?? {};
+  const plan = opts.plan ?? {};
   const n = opts.maxPoints || games.length;
   const available = new Set(Array.from({ length: n }, (_, i) => i + 1));
   const errors = [];
   const picks = [];
   const open = [];
+  const planned = [];
 
   for (const game of games) {
     const override = overrides[game.id] ?? null;
@@ -50,7 +53,8 @@ export function assign(games, opts = {}) {
       errors.push(`${lock.team} lock at ${lock.points} conflicts or is out of range; unlocked`);
       lock = null;
     }
-    const chosen = lock?.team ?? forced[game.id] ?? (homeP >= 0.5 ? game.home.abbr : game.away.abbr);
+    const target = lock ? null : plan[game.id];
+    const chosen = lock?.team ?? target?.team ?? forced[game.id] ?? (homeP >= 0.5 ? game.home.abbr : game.away.abbr);
     const isHome = chosen === game.home.abbr;
     const side = (p) => (p == null ? null : isHome ? p : 1 - p);
     const winProb = side(homeP);
@@ -62,6 +66,7 @@ export function assign(games, opts = {}) {
     }
     if (override != null) flags.push("override");
     if (!lock && forced[game.id] && winProb < 0.5) flags.push("upset pick");
+    else if (target && winProb < 0.5) flags.push("contrarian");
 
     const pick = {
       game,
@@ -81,14 +86,23 @@ export function assign(games, opts = {}) {
       pick.points = lock.points;
     } else {
       if (game.started && !game.completed) flags.push("already started");
-      open.push(pick);
+      (target ? planned : open).push([pick, target]);
     }
     picks.push(pick);
+  }
+
+  // Planned points go after every lock has claimed its value.
+  for (const [pick, target] of planned) {
+    if (available.has(target.points)) {
+      available.delete(target.points);
+      pick.points = target.points;
+    } else open.push([pick]);
   }
 
   const points = [...available].sort((a, b) => b - a);
   if (points.length < open.length) errors.push(`not enough point values for ${open.length} games`);
   open
+    .map(([pick]) => pick)
     .sort((a, b) => b.winProb - a.winProb)
     .forEach((pick, i) => (pick.points = points[i] ?? 0));
 

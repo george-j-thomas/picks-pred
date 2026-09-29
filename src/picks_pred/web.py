@@ -17,10 +17,11 @@ from typing import Any, Callable
 from urllib.parse import parse_qs
 
 from picks_pred.models import Game, Team
-from picks_pred.sources import espn, oddsapi
+from picks_pred.sources import espn, injuries, oddsapi
 
 ESPN_TTL = 120
 ODDS_TTL = 300
+INJURY_TTL = 900
 _cache: dict[Any, tuple[float, Any]] = {}
 
 SOURCE_LABELS = {
@@ -171,12 +172,25 @@ def app(environ: dict[str, Any], start_response) -> list[bytes]:
     return _json(start_response, "200 OK", payload, cache)
 
 
+def injuries_app(environ: dict[str, Any], start_response) -> list[bytes]:
+    """WSGI app for ``GET /api/injuries``: current ESPN injury report by team abbreviation."""
+    if environ.get("REQUEST_METHOD", "GET") not in ("GET", "HEAD"):
+        return _json(start_response, "405 Method Not Allowed", {"error": "GET only"})
+    try:
+        payload = _cached(("injuries",), INJURY_TTL, injuries.load_injuries)
+    except Exception as exc:
+        return _json(start_response, "502 Bad Gateway", {"error": f"failed to load injuries: {exc}"})
+    return _json(start_response, "200 OK", payload, "public, s-maxage=900, stale-while-revalidate=3600")
+
+
 PUBLIC_DIR = Path(__file__).resolve().parents[2] / "public"
 
 
 def dev_app(environ: dict[str, Any], start_response) -> list[bytes]:
     """Local stand-in for Vercel: ``/api/*`` goes to :func:`app`, everything else is static."""
     path = environ.get("PATH_INFO", "/")
+    if path.rstrip("/") == "/api/injuries":
+        return injuries_app(environ, start_response)
     if path.startswith("/api/"):
         return app(environ, start_response)
     target = (PUBLIC_DIR / path.lstrip("/")).resolve()

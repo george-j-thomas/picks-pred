@@ -24,12 +24,14 @@ Expected score: 94.0 / 136 (sd 16.9, 80% range 72-115)
 
 ## Web UI
 
-The web app is a static frontend (`public/`) backed by one Python function (`api/games.py`). It has:
+The web app is a static frontend (`public/`) backed by two Python functions: `api/games.py` for games and odds, and `api/injuries.py` for the injury report. It has:
 
 - a week selector
 - team logos and colors
 - a score-distribution chart
 - a blend slider that sets the market-versus-FPI weighting
+- a **Goal** switch: **Max points** or **Win the week** (see below)
+- injury chips on each row. Click one for both teams' report.
 
 Each row has three controls:
 
@@ -48,12 +50,33 @@ uv run picks-pred-web             # http://127.0.0.1:8765
 ### Deploy to Vercel (free Hobby plan)
 
 1. On vercel.com, click **Add New… → Project** and import `george-j-thomas/picks-pred`.
-2. Leave the framework preset as **Other** and leave the build command empty. `vercel.json` already serves `public/` and deploys `api/games.py` as a Python function.
+2. Leave the framework preset as **Other** and leave the build command empty. `vercel.json` already serves `public/` and deploys each `api/*.py` file as a Python function.
 3. Deploy. Every later push to `main` redeploys automatically.
 
 **Odds API key:** open **Sources** in the UI and paste your key there. It is stored only in your browser and sent with each request in a header. You can instead set an `ODDS_API_KEY` environment variable in Vercel. If you do, anyone with the URL spends your quota.
 
 Responses without a key are edge-cached for 2 minutes. For weeks already played, the app uses ESPN's closing lines and shows how the picks would have scored.
+
+### Win the week (contrarian picks)
+
+**Max points** is the best plan for season totals. It is also what most of your pool plays, so in a weekly contest you finish level with the chalk and rarely come out on top. **Win the week** asks a different question: which picks most often beat *every* other entry?
+
+- Enter your pool size. The browser simulates thousands of weeks. Each opponent reads the same lines with some noise: a shared "public lean" plus their own read. A 60% favorite gets about 74% of the picks and a 70% favorite about 90%, which is close to real pick'em splits.
+- A hill-climb search (in a Web Worker) swaps points and flips picks to maximize the chance of scoring highest outright. Ties split the prize.
+- The plan is then checked on a fresh set of simulations. It is used only if it really does win more often than max points. Otherwise you keep the max-points picks.
+- Upsets the search chose get a red **CONTRARIAN** tag. The hero panel shows your chance to win the week against the max-points plan, the expected points you give up, and the score that usually wins.
+
+Example (week 4, 20 entries): the search puts **LV (33%) at 16**. You give up about 7 expected points, but your chance to win the week goes from about 6.6% to 10.5%. Larger pools push harder, and small pools (5 or fewer) usually keep the chalk. Locks and flips still apply. If you flip a contrarian pick back, the search re-plans around it.
+
+### Injuries
+
+Each row has a chip with each team's count of Out, Doubtful, Questionable and recently placed IR players (for example `PIT 3 · CLE 1`). A starting QB on the report also gets his own tag.
+
+- The chip turns red when *your* pick has a key injury: a starter who is Out, Doubtful or on IR, or any QB starter listed.
+- It turns amber when only the opponent has one.
+- Click the chip to see both teams' report.
+
+The data is ESPN's current league-wide injury report (`/api/injuries`, cached for 15 minutes). Betting lines already move on this news, so the report is for context and does not change the picks. The "starter" tag comes from ESPN depth charts, where injured players often drop down, so it is best-effort.
 
 ## How it works
 
@@ -119,7 +142,7 @@ When the key is set, each book is de-vigged separately and the results are avera
 ## Strategy notes
 
 - These picks **maximize expected points**, which is the right goal for season-long totals.
-- If you're chasing a *weekly* prize in a large pool, it can make sense to take a calculated risk on a `coin flip` or `FPI picks other side` game. Those games carry few points, so being wrong there costs little.
+- If you're chasing a *weekly* prize in a large pool, use **Win the week** in the web UI. It simulates your pool and picks the upsets that most improve your odds of finishing first.
 - Games are treated as independent, and ties are ignored.
 
 ## Development
