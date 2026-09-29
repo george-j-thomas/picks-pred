@@ -8,6 +8,7 @@ dependencies = ["rich>=13"]
 
 [project.scripts]
 picks-pred = "picks_pred.cli:main"
+picks-pred-web = "picks_pred.web:serve"
 
 [dependency-groups]
 dev = ["pytest>=8"]

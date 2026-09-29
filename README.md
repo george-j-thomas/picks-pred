@@ -22,6 +22,39 @@ Example output:
 Expected score: 94.0 / 136 (sd 16.9, 80% range 72-115)
 ```
 
+## Web UI
+
+The web app is a static frontend (`public/`) backed by one Python function (`api/games.py`). It has:
+
+- a week selector
+- team logos and colors
+- a score-distribution chart
+- a blend slider that sets the market-versus-FPI weighting
+
+Each row has three controls:
+
+- **lock**: fix a pick at a given point value
+- **flip**: take the underdog instead
+- **tune**: override the win probability
+
+Every change re-optimizes in the browser instantly and is saved per week in `localStorage`. **Copy picks** copies the list to your clipboard for your pool site.
+
+Run it locally:
+
+```bash
+uv run picks-pred-web             # http://127.0.0.1:8765
+```
+
+### Deploy to Vercel (free Hobby plan)
+
+1. On vercel.com, click **Add New… → Project** and import `george-j-thomas/picks-pred`.
+2. Leave the framework preset as **Other** and leave the build command empty. `vercel.json` already serves `public/` and deploys `api/games.py` as a Python function.
+3. Deploy. Every later push to `main` redeploys automatically.
+
+**Odds API key:** open **Sources** in the UI and paste your key there. It is stored only in your browser and sent with each request in a header. You can instead set an `ODDS_API_KEY` environment variable in Vercel. If you do, anyone with the URL spends your quota.
+
+Responses without a key are edge-cached for 2 minutes. For weeks already played, the app uses ESPN's closing lines and shows how the picks would have scored.
+
 ## How it works
 
 1. **Schedule and odds** come from ESPN's public scoreboard API, which includes the DraftKings moneyline for every game. You don't need an API key for this.
@@ -94,3 +127,5 @@ When the key is set, each book is de-vigged separately and the results are avera
 ```bash
 uv run pytest
 ```
+
+`public/optimize.js` mirrors `src/picks_pred/optimize.py`. The parity tests in `tests/test_web.py` require `node` and are skipped when it isn't installed.

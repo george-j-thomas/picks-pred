@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Picks/Pred — NFL confidence pool optimizer</title>
+  <meta name="description" content="Optimal NFL confidence-pool picks from sportsbook odds and ESPN FPI." />
+  <meta name="theme-color" content="#070a08" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23070a08'/%3E%3Ctext x='32' y='46' font-family='Impact,sans-serif' font-size='38' text-anchor='middle' fill='%23d7ff3c'%3E16%3C/text%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@500;700;800;900&family=Barlow:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="field" aria-hidden="true"></div>
+  <div class="grain" aria-hidden="true"></div>
+
+  <header class="masthead">
+    <a class="brand" href="./" aria-label="Picks/Pred home">
+      <span class="brand-picks">Picks</span><span class="brand-slash">/</span><span class="brand-pred">Pred</span>
+    </a>
+    <p class="tagline">Confidence pool optimizer</p>
+    <div class="season" role="group" aria-label="Season">
+      <button class="icon-btn" id="seasonPrev" aria-label="Previous season">‹</button>
+      <span id="seasonLabel">—</span>
+      <button class="icon-btn" id="seasonNext" aria-label="Next season">›</button>
+    </div>
+    <button class="btn ghost" id="settingsBtn" aria-controls="drawer" aria-expanded="false">
+      <span class="dot" id="oddsDot"></span> Sources
+    </button>
+  </header>
+
+  <nav class="weeks" id="weeks" aria-label="Week"></nav>
+
+  <main>
+    <section class="hero" id="hero" aria-live="polite">
+      <div class="hero-title">
+        <div class="eyebrow" id="weekEyebrow">Loading</div>
+        <h1 id="weekTitle">Week —</h1>
+        <div class="hero-meta" id="weekMeta"></div>
+      </div>
+      <div class="hero-stats" id="heroStats"></div>
+      <figure class="dist" id="dist">
+        <figcaption>Score distribution</figcaption>
+        <svg id="distSvg" viewBox="0 0 600 170" preserveAspectRatio="none" role="img" aria-label="Probability of each total score"></svg>
+        <div class="dist-axis" id="distAxis"></div>
+      </figure>
+    </section>
+
+    <section class="toolbar" aria-label="Controls">
+      <div class="blend">
+        <label for="weight">Blend</label>
+        <span class="blend-end">Market</span>
+        <input type="range" id="weight" min="0" max="100" step="5" value="80" aria-describedby="weightOut" />
+        <span class="blend-end">FPI</span>
+        <output id="weightOut">80 / 20</output>
+      </div>
+      <div class="toolbar-actions">
+        <button class="btn ghost" id="resetBtn" title="Clear locks, flips and overrides for this week">Reset tweaks</button>
+        <button class="btn ghost" id="copyBtn">Copy picks</button>
+        <button class="btn primary" id="runBtn"><span class="run-icon">↻</span> Refresh lines</button>
+      </div>
+    </section>
+
+    <div class="notice" id="notice" hidden></div>
+
+    <section class="ladder" id="ladder" aria-label="Picks ranked by confidence"></section>
+
+    <footer class="foot">
+      <p>
+        Picks maximize expected points: take every favorite, give the most points to the surest winners.
+        Market lines are de-vigged moneylines; FPI is ESPN's model. Lock a pick you've already submitted,
+        flip a game to take the underdog, or tune any probability — everything re-optimizes instantly.
+      </p>
+      <p class="legend">
+        <span class="flag">coin flip</span> favorite under 55%
+        <span class="flag warn">FPI disagrees</span> model and market differ by 10+ pts
+        <span class="flag hot">FPI picks other side</span> they favor different teams
+      </p>
+    </footer>
+  </main>
+
+  <aside class="drawer" id="drawer" aria-label="Data sources" hidden>
+    <div class="drawer-head">
+      <h2>Sources</h2>
+      <button class="icon-btn" id="drawerClose" aria-label="Close">✕</button>
+    </div>
+    <div class="drawer-body">
+      <section>
+        <h3>Always on</h3>
+        <ul class="source-list">
+          <li><b>DraftKings</b> moneyline via ESPN — no key needed</li>
+          <li><b>ESPN FPI</b> model win probability</li>
+        </ul>
+      </section>
+      <section>
+        <h3>More sportsbooks <span class="pill" id="keyState">off</span></h3>
+        <p class="hint">
+          Add a free <a href="https://the-odds-api.com" target="_blank" rel="noopener">The Odds API</a> key for a
+          de-vigged consensus across FanDuel, DraftKings, BetMGM, Caesars and more. 500 free requests/month;
+          each refresh uses one. The key stays in this browser.
+        </p>
+        <label class="field-label" for="apiKey">API key</label>
+        <div class="key-row">
+          <input id="apiKey" type="password" autocomplete="off" spellcheck="false" placeholder="paste key" />
+          <button class="btn ghost small" id="keyToggle" type="button">Show</button>
+        </div>
+        <p class="hint" id="keyStatus"></p>
+        <label class="field-label">Books <span class="hint-inline">(none selected = all US books)</span></label>
+        <div class="chips" id="books"></div>
+      </section>
+      <section>
+        <h3>Pool rules</h3>
+        <label class="field-label" for="maxPoints">Highest point value</label>
+        <input id="maxPoints" type="number" min="1" max="32" placeholder="auto (number of games)" />
+      </section>
+      <button class="btn primary wide" id="saveSources">Save &amp; refresh</button>
+    </div>
+  </aside>
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

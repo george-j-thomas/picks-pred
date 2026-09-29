@@ -16,6 +16,10 @@ PREDICTOR = (
     "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/"
     "events/{id}/competitions/{id}/predictor"
 )
+CORE_ODDS = (
+    "https://sports.core.api.espn.com/v2/sports/football/leagues/nfl/"
+    "events/{id}/competitions/{id}/odds"
+)
 FPI = "espn_fpi"
 
 
@@ -41,7 +45,20 @@ def fetch_scoreboard(season: int | None, week: int | None, season_type: int) -> 
 
 def _team(competitor: dict[str, Any]) -> Team:
     t = competitor["team"]
-    return Team(abbr=t["abbreviation"], name=t["displayName"])
+    return Team(
+        abbr=t["abbreviation"],
+        name=t["displayName"],
+        logo=t.get("logo", ""),
+        color=t.get("color", ""),
+        alt_color=t.get("alternateColor", ""),
+    )
+
+
+def _score(competitor: dict[str, Any]) -> int | None:
+    try:
+        return int(competitor["score"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def _odds_value(node: dict[str, Any] | None, key: str) -> str | None:
@@ -67,9 +84,14 @@ def parse_games(data: dict[str, Any]) -> list[Game]:
             home=_team(home),
             away=_team(away),
             status=comp["status"]["type"]["name"],
+            completed=bool(comp["status"]["type"].get("completed")),
+            status_detail=comp["status"]["type"].get("shortDetail", ""),
         )
+        if game.started:
+            game.home_score, game.away_score = _score(home), _score(away)
         for line in comp.get("odds") or []:
             source = _slug(line.get("provider", {}).get("name", "espn_odds"))
+            game.line = game.line or line.get("details") or ""
             ml = line.get("moneyline") or {}
             h_ml, a_ml = _odds_value(ml.get("home"), "odds"), _odds_value(ml.get("away"), "odds")
             if h_ml is None or a_ml is None:
@@ -118,16 +140,72 @@ def add_fpi(games: list[Game]) -> None:
         print(f"note: ESPN FPI unavailable for {', '.join(missing)}", file=sys.stderr)
 
 
+def _core_odds(game_id: str) -> dict[str, float]:
+    try:
+        data, _ = get_json(CORE_ODDS.format(id=game_id))
+    except Exception:
+        return {}
+    probs: dict[str, float] = {}
+    for item in data.get("items", []):
+        source = _slug(item.get("provider", {}).get("name", "espn_odds"))
+        h = (item.get("homeTeamOdds") or {}).get("moneyLine")
+        a = (item.get("awayTeamOdds") or {}).get("moneyLine")
+        try:
+            if h is not None and a is not None:
+                probs[source] = moneyline_home_prob(h, a)
+            elif item.get("spread") is not None:
+                # core API "spread" is from the home team's perspective
+                probs[f"{source}_spread"] = spread_home_prob(float(item["spread"]))
+        except ValueError:
+            continue
+    return probs
+
+
+def add_closing_odds(games: list[Game]) -> None:
+    """The scoreboard drops lines once games start; recover closing lines for those games."""
+    missing = [g for g in games if not g.market_sources]
+    if not missing:
+        return
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        for game, probs in zip(missing, pool.map(lambda g: _core_odds(g.id), missing)):
+            game.home_probs.update(probs)
+            game.market_sources.update(probs)
+
+
+def parse_calendar(data: dict[str, Any]) -> list[dict[str, Any]]:
+    """Regular-season and postseason weeks from the scoreboard's league calendar."""
+    weeks: list[dict[str, Any]] = []
+    for league in data.get("leagues", [])[:1]:
+        for block in league.get("calendar", []):
+            if not isinstance(block, dict) or block.get("value") not in ("2", "3"):
+                continue
+            for entry in block.get("entries", []):
+                if "Pro Bowl" in entry.get("label", ""):
+                    continue
+                weeks.append({
+                    "season_type": int(block["value"]),
+                    "week": int(entry["value"]),
+                    "label": entry.get("label", ""),
+                    "short": entry.get("alternateLabel", ""),
+                    "detail": entry.get("detail", ""),
+                    "start": entry.get("startDate"),
+                    "end": entry.get("endDate"),
+                })
+    return weeks
+
+
 def load_week(
     season: int | None = None, week: int | None = None, season_type: int = 2, fpi: bool = True
 ) -> tuple[dict[str, Any], list[Game]]:
     data = fetch_scoreboard(season, week, season_type)
     games = parse_games(data)
+    add_closing_odds(games)
     if fpi:
         add_fpi(games)
     meta = {
         "season": data.get("season", {}).get("year", season),
         "season_type": data.get("season", {}).get("type", season_type),
         "week": data.get("week", {}).get("number", week),
+        "calendar": parse_calendar(data),
     }
     return meta, games

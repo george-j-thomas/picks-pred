@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
+  "functions": {
+    "api/**/*.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{tests/**,public/**,.venv/**,**/__pycache__/**}"
+    }
+  }
+}

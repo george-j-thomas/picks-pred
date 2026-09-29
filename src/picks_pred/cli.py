@@ -82,7 +82,10 @@ def main(argv: list[str] | None = None) -> int:
     if api_key:
         try:
             books = [b.strip() for b in args.books.split(",")] if args.books else None
-            matched = oddsapi.apply(games, oddsapi.fetch(api_key, books))
+            events, remaining = oddsapi.fetch(api_key, books)
+            matched = oddsapi.apply(games, events)
+            if remaining is not None:
+                err.print(f"note: The Odds API requests remaining this month: {remaining}", style="dim")
             err.print(f"note: The Odds API lines matched {matched}/{len(games)} games", style="dim")
         except Exception as exc:
             err.print(f"[yellow]warning: The Odds API failed ({exc}); using ESPN lines only")

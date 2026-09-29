@@ -8,6 +8,9 @@ from datetime import datetime
 class Team:
     abbr: str
     name: str  # full display name, e.g. "Pittsburgh Steelers"
+    logo: str = ""
+    color: str = ""
+    alt_color: str = ""
 
 
 @dataclass
@@ -22,6 +25,11 @@ class Game:
     # Source name -> is it a betting market (vs. a model like FPI).
     market_sources: set[str] = field(default_factory=set)
     override_home_prob: float | None = None
+    completed: bool = False
+    status_detail: str = ""
+    line: str = ""  # e.g. "PIT -2.5"
+    home_score: int | None = None
+    away_score: int | None = None
 
     @property
     def started(self) -> bool:
