@@ -1,8 +1,8 @@
 # picks-pred
 
-A weekly pick optimizer for **NFL confidence pools**, hosted as a web app on **Vercel**. You pick the straight-up winner of every game, give each game a unique confidence value from 1 to N, and score those points when your pick wins.
+A weekly pick optimizer for **NFL confidence pools**, hosted on Vercel at **[picks-pred.com](https://picks-pred.com)**. You pick the straight-up winner of every game, give each game a unique confidence value from 1 to N, and score those points when your pick wins.
 
-Open the site, choose the week, and it ranks every game from live betting lines. Nothing needs to be installed.
+Open [picks-pred.com](https://picks-pred.com), choose the week, and it ranks every game from live betting lines. Nothing needs to be installed.
 
 ## Using the app
 
@@ -82,7 +82,7 @@ The data is ESPN's current league-wide injury report (`/api/injuries`, cached fo
 
 ## Hosting on Vercel
 
-The site is a static frontend (`public/`) plus two small serverless API routes (`/api/games` and `/api/injuries`) that fetch and cache ESPN data. It runs on Vercel's free Hobby plan, and every push to `main` redeploys automatically.
+The site is a static frontend (`public/`) plus two small serverless API routes (`/api/games` and `/api/injuries`) that fetch and cache ESPN data. It runs on Vercel's free Hobby plan with the custom domain `picks-pred.com`, and every push to `main` redeploys automatically.
 
 To set up a new deployment:
 
