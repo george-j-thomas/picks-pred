@@ -1,0 +1,20 @@
+[project]
+name = "picks-pred"
+version = "0.1.0"
+description = "NFL confidence-pool pick optimizer driven by sportsbook odds and ESPN FPI"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["rich>=13"]
+
+[project.scripts]
+picks-pred = "picks_pred.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
