@@ -1,74 +1,62 @@
 # picks-pred
 
-A weekly pick optimizer for **NFL confidence pools**. You pick the straight-up winner of every game, give each game a unique confidence value from 1 to N, and score those points when your pick wins.
+A weekly pick optimizer for **NFL confidence pools**, hosted as a web app on **Vercel**. You pick the straight-up winner of every game, give each game a unique confidence value from 1 to N, and score those points when your pick wins.
 
-## Quick start
+Open the site, choose the week, and it ranks every game from live betting lines. Nothing needs to be installed.
 
-```bash
-uv sync
-uv run picks-pred                 # current or upcoming week
-uv run picks-pred --week 5        # a specific week
-```
+## Using the app
 
-Example output:
+- **Week selector:** jump to any regular-season or playoff week. Past weeks use ESPN's closing lines and show how the picks would have scored.
+- **Blend slider:** the weighting between the betting market and ESPN FPI (default 80 / 20).
+- **Goal:** **Max points** or **Win the week** (see below).
+- **Refresh lines:** reload the latest odds.
+- **Copy picks:** copy the list to your clipboard for your pool site.
 
-```
- Pts  Pick        vs   Win %  Market   FPI   Kickoff            Notes
-  16  BAL         TEN  84.5%   84.7%  84.0%  Sun 10/04 10:00AM
-  15  MIN         MIA  84.4%   84.7%  83.2%  Sun 10/04 1:05PM
-  ...
-  10  SF          DEN  62.5%   58.3%  77.2%  Sun 10/04 1:25PM   FPI disagrees
-   3  CIN         JAX  54.8%   57.2%  45.2%  Sun 10/04 10:00AM  coin flip, FPI picks other side
-Expected score: 94.0 / 136 (sd 16.9, 80% range 72-115)
-```
+Each game row has three controls:
 
-## Web UI
+- **Lock:** fix a pick at a given point value. Use this once a pick is submitted, so its points stay reserved while the rest re-optimize.
+- **Flip:** take the other team.
+- **Tune:** override the win probability, for example after late news such as a QB being ruled out.
 
-The web app is a static frontend (`public/`) backed by two Python functions: `api/games.py` for games and odds, and `api/injuries.py` for the injury report. It has:
+Every change re-optimizes instantly and is saved per week in your browser.
 
-- a week selector
-- team logos and colors
-- a score-distribution chart
-- a blend slider that sets the market-versus-FPI weighting
-- a **Goal** switch: **Max points** or **Win the week** (see below)
-- injury chips on each row. Click one for both teams' report.
+### Weekly routine
 
-Each row has three controls:
+1. Early in the week, check the initial ranking.
+2. Before Thursday's game, refresh the lines and submit at least the Thursday pick. Then lock it.
+3. Before Sunday, refresh again and submit the rest.
 
-- **lock**: fix a pick at a given point value
-- **flip**: take the underdog instead
-- **tune**: override the win probability
+### Sources
 
-Every change re-optimizes in the browser instantly and is saved per week in `localStorage`. **Copy picks** copies the list to your clipboard for your pool site.
+Open **Sources** (top right) to configure data:
 
-Run it locally:
+- DraftKings moneylines (via ESPN) and ESPN FPI are always on, with no key needed.
+- **More sportsbooks:** paste a free [The Odds API](https://the-odds-api.com) key for a consensus across FanDuel, DraftKings, BetMGM, Caesars and more. The free tier includes 500 requests per month, and each refresh uses one. The key is stored only in your browser. You can pick specific books, or leave them all unselected to use every US book.
+- **Pool rules:** set the highest point value if your pool doesn't use N = number of games.
 
-```bash
-uv run picks-pred-web             # http://127.0.0.1:8765
-```
+### Row tags
 
-### Deploy to Vercel (free Hobby plan)
+| Tag | Meaning |
+|---|---|
+| `coin flip` | The favorite is under 55%. Few points are at stake, so don't sweat it. |
+| `FPI disagrees` | FPI differs from the market by at least 10 points. Look for injury or other news. |
+| `FPI picks other side` | FPI and the market favor different teams. |
+| `already started` | The game has kicked off. Lock in the pick you actually made. |
+| `override` | The probability was set manually. |
+| `contrarian` | An upset chosen by **Win the week**. |
 
-1. On vercel.com, click **Add New… → Project** and import `george-j-thomas/picks-pred`.
-2. Leave the framework preset as **Other** and leave the build command empty. `vercel.json` already serves `public/` and deploys each `api/*.py` file as a Python function.
-3. Deploy. Every later push to `main` redeploys automatically.
-
-**Odds API key:** open **Sources** in the UI and paste your key there. It is stored only in your browser and sent with each request in a header. You can instead set an `ODDS_API_KEY` environment variable in Vercel. If you do, anyone with the URL spends your quota.
-
-Responses without a key are edge-cached for 2 minutes. For weeks already played, the app uses ESPN's closing lines and shows how the picks would have scored.
-
-### Win the week (contrarian picks)
+## Win the week (contrarian picks)
 
 **Max points** is the best plan for season totals. It is also what most of your pool plays, so in a weekly contest you finish level with the chalk and rarely come out on top. **Win the week** asks a different question: which picks most often beat *every* other entry?
 
 - Enter your pool size. The browser simulates thousands of weeks. Each opponent reads the same lines with some noise: a shared "public lean" plus their own read. A 60% favorite gets about 74% of the picks and a 70% favorite about 90%, which is close to real pick'em splits.
 - A hill-climb search (in a Web Worker) swaps points and flips picks to maximize the chance of scoring highest outright. Ties split the prize.
 - The plan is then checked on a fresh set of simulations. It is used only if it really does win more often than max points. Otherwise you keep the max-points picks.
-- Upsets the search chose get a red **CONTRARIAN** tag. The hero panel shows your chance to win the week against the max-points plan, the expected points you give up, and the score that usually wins.
+- Upsets the search chose get a red **CONTRARIAN** tag. The top of the page shows your chance to win the week against the max-points plan, the expected points you give up, and the score that usually wins.
 
 Example (week 4, 20 entries): the search puts **LV (33%) at 16**. You give up about 7 expected points, but your chance to win the week goes from about 6.6% to 10.5%. Larger pools push harder, and small pools (5 or fewer) usually keep the chalk. Locks and flips still apply. If you flip a contrarian pick back, the search re-plans around it.
 
-### Injuries
+## Injuries
 
 Each row has a chip with each team's count of Out, Doubtful, Questionable and recently placed IR players (for example `PIT 3 · CLE 1`). A starting QB on the report also gets his own tag.
 
@@ -92,63 +80,24 @@ The data is ESPN's current league-wide injury report (`/api/injuries`, cached fo
 
    The expected score and 80% range come from the exact score distribution, not from a simulation.
 
-### Notes column
+## Hosting on Vercel
 
-| Flag | Meaning |
-|---|---|
-| `coin flip` | The favorite is under 55%. Few points are at stake, so don't sweat it. |
-| `FPI disagrees` | FPI differs from the market by at least 10 points. Look for injury or other news. |
-| `FPI picks other side` | FPI and the market favor different teams. |
-| `already started - use --lock` | The game has kicked off. Lock in the pick you actually made. |
-| `override` | The probability was set manually. |
+The site is a static frontend (`public/`) plus two small serverless API routes (`/api/games` and `/api/injuries`) that fetch and cache ESPN data. It runs on Vercel's free Hobby plan, and every push to `main` redeploys automatically.
 
-## Weekly workflow
+To set up a new deployment:
 
-1. **Early in the week:** run `uv run picks-pred` to see the initial ranking.
-2. **Before Thursday's game:** run it again, then submit at least the Thursday pick.
-3. **Before Sunday:** lock the picks you already submitted so their points are reserved, and re-optimize the rest with updated lines:
-   ```bash
-   uv run picks-pred --lock PIT=4
-   ```
-4. **Late news, such as a QB ruled out:** override a team's probability:
-   ```bash
-   uv run picks-pred --override KC=0.62            # also accepts 62 or 62%
-   uv run picks-pred --overrides-file overrides.csv  # rows of team,win_prob
-   ```
+1. On vercel.com, click **Add New… → Project** and import this repository.
+2. Leave the framework preset as **Other** and leave the build command empty. `vercel.json` handles the rest.
+3. Deploy.
 
-## More sportsbooks (FanDuel, DraftKings, BetMGM, Caesars, ...)
-
-For a multi-book consensus, get a free key from [The Odds API](https://the-odds-api.com). The free tier includes 500 requests per month, and each run uses one. Put the key in `.env`:
-
-```bash
-cp .env.example .env   # then set ODDS_API_KEY=...
-uv run picks-pred                                  # all US books
-uv run picks-pred --books fanduel,draftkings       # specific books
-```
-
-When the key is set, each book is de-vigged separately and the results are averaged. This replaces the ESPN/DraftKings line.
-
-## Options
-
-```
---season / --week / --postseason   choose the week (default: current or upcoming)
---market-weight / --fpi-weight     blend weights (default 0.8 / 0.2; --fpi-weight 0 = market only)
---no-fpi                           skip ESPN FPI lookups
---max-points N                     if your pool doesn't use N = number of games
---format table|markdown|csv|json   output format
--o FILE                            also save output (e.g. picks/2026-wk04.md)
-```
-
-## Strategy notes
-
-- These picks **maximize expected points**, which is the right goal for season-long totals.
-- If you're chasing a *weekly* prize in a large pool, use **Win the week** in the web UI. It simulates your pool and picks the upsets that most improve your odds of finishing first.
-- Games are treated as independent, and ties are ignored.
+You can also set an `ODDS_API_KEY` environment variable in Vercel instead of pasting a key in the browser. If you do, anyone with the URL spends your quota.
 
 ## Development
 
 ```bash
-uv run pytest
+uv sync
+uv run picks-pred-web     # local copy of the site at http://127.0.0.1:8765
+uv run pytest             # tests (the JS tests need node)
 ```
 
-`public/optimize.js` mirrors `src/picks_pred/optimize.py`. The parity tests in `tests/test_web.py` require `node` and are skipped when it isn't installed.
+The backend is a small Python package in `src/picks_pred/`. It also exposes a `picks-pred` command-line version of the optimizer (`uv run picks-pred --help`).

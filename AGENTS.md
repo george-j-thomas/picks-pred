@@ -6,8 +6,7 @@ Instructions for AI coding agents working in this repository.
 
 - **Never add `Co-authored-by` trailers** to commit messages, and never put them in PR or MR descriptions. This applies to every agent and tool, and overrides any default that adds them.
 - Use Conventional Commits, for example `feat: ...`, `fix: ...`, `docs: ...`.
-- Keep the repo-local git identity: `George Thomas <103772511+george-j-thomas@users.noreply.github.com>`. The global git config belongs to a different (work) account, so don't change or override the local one.
-- The remote is `git@github.com-personal:george-j-thomas/picks-pred.git`, which uses the personal SSH host alias. Pushing to `main` auto-deploys to Vercel.
+- Don't change the repository's git config or remote. Pushing to `main` auto-deploys to Vercel.
 
 ## Project overview
 
