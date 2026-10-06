@@ -15,6 +15,10 @@ from picks_pred.odds import inv_logit, logit
 COIN_FLIP = 0.55
 DISAGREE_GAP = 0.10
 
+# Confidence pools cap the highest point value at a full week's game count (16), so a
+# short week (e.g. byes) drops the low values rather than the high ones: 15 games -> 2..16.
+FULL_WEEK_POINTS = 16
+
 
 @dataclass
 class Weights:
@@ -58,7 +62,7 @@ def assign(
     """
     weights = weights or Weights()
     locks = {k.upper(): v for k, v in (locks or {}).items()}
-    n = max_points or len(games)
+    n = max_points or max(FULL_WEEK_POINTS, len(games))
     available = set(range(1, n + 1))
 
     picks: list[Pick] = []

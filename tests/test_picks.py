@@ -51,14 +51,22 @@ def test_blend_weights_in_log_odds():
 
 def test_assign_orders_by_confidence_and_picks_favorites():
     games = [game("1", "A", "B", 0.55), game("2", "C", "D", 0.2), game("3", "E", "F", 0.7)]
-    picks = assign(games)
+    picks = assign(games, max_points=3)
     assert [(p.team.abbr, p.points) for p in picks] == [("D", 3), ("E", 2), ("A", 1)]
     assert sorted(p.points for p in picks) == [1, 2, 3]
 
 
+def test_assign_anchors_points_to_full_week():
+    games = [game("1", "A", "B", 0.7), game("2", "C", "D", 0.6)]
+    picks = assign(games)
+    assert sorted((p.points for p in picks), reverse=True) == [16, 15]
+    many = [game(str(i), f"H{i}", f"V{i}", 0.6) for i in range(16)]
+    assert sorted(p.points for p in assign(many)) == list(range(1, 17))
+
+
 def test_assign_respects_locks():
     games = [game("1", "A", "B", 0.55), game("2", "C", "D", 0.2), game("3", "E", "F", 0.7)]
-    picks = {p.team.abbr: p for p in assign(games, locks={"b": 3})}
+    picks = {p.team.abbr: p for p in assign(games, locks={"b": 3}, max_points=3)}
     assert picks["B"].points == 3 and picks["B"].locked
     assert picks["D"].points == 2 and picks["E"].points == 1
 
@@ -67,7 +75,7 @@ def test_assign_respects_locks():
 def test_assign_rejects_bad_locks(locks):
     games = [game("1", "A", "B", 0.55), game("2", "C", "D", 0.2), game("3", "E", "F", 0.7)]
     with pytest.raises(ValueError):
-        assign(games, locks=locks)
+        assign(games, locks=locks, max_points=3)
 
 
 def test_assign_flags():
@@ -80,7 +88,7 @@ def test_assign_flags():
 
 def test_score_distribution():
     games = [game("1", "A", "B", 0.5), game("2", "C", "D", 0.75)]
-    picks = assign(games)
+    picks = assign(games, max_points=2)
     dist = score_distribution(picks)
     assert sum(dist) == pytest.approx(1)
     assert dist[0] == pytest.approx(0.125) and dist[3] == pytest.approx(0.375)

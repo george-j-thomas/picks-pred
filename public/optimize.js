@@ -4,6 +4,10 @@
 export const COIN_FLIP = 0.55;
 export const DISAGREE_GAP = 0.10;
 
+// Confidence pools cap the highest point value at a full week's game count (16), so a
+// short week (e.g. byes) drops the low values rather than the high ones: 15 games -> 2..16.
+export const FULL_WEEK_POINTS = 16;
+
 const clamp = (p) => Math.min(Math.max(p, 1e-6), 1 - 1e-6);
 export const logit = (p) => Math.log(clamp(p) / (1 - clamp(p)));
 export const invLogit = (x) => 1 / (1 + Math.exp(-x));
@@ -33,7 +37,7 @@ export function assign(games, opts = {}) {
   const forced = opts.forced ?? {};
   const overrides = opts.overrides ?? {};
   const plan = opts.plan ?? {};
-  const n = opts.maxPoints || games.length;
+  const n = opts.maxPoints || Math.max(FULL_WEEK_POINTS, games.length);
   const available = new Set(Array.from({ length: n }, (_, i) => i + 1));
   const errors = [];
   const picks = [];

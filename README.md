@@ -32,7 +32,7 @@ Open **Sources** (top right) to configure data:
 
 - DraftKings moneylines (via ESPN) and ESPN FPI are always on, with no key needed.
 - **More sportsbooks:** paste a free [The Odds API](https://the-odds-api.com) key for a consensus across FanDuel, DraftKings, BetMGM, Caesars and more. The free tier includes 500 requests per month, and each refresh uses one. The key is stored only in your browser. You can pick specific books, or leave them all unselected to use every US book.
-- **Pool rules:** set the highest point value if your pool doesn't use N = number of games.
+- **Pool rules:** the highest point value defaults to 16 (a full week), so short weeks use the top values (e.g. 15 games → 2–16). Set this if your pool uses N = number of games.
 
 ### Row tags
 

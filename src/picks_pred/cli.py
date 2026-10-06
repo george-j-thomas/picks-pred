@@ -54,7 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--lock", action="append", default=[], metavar="TEAM=PTS", type=lambda s: _kv(s, int),
                    help="pick already submitted, e.g. PIT=9 for a started Thursday game (repeatable)")
     g.add_argument("--max-points", type=int,
-                   help="highest point value if your pool doesn't use N = number of games")
+                   help="highest point value (default 16, a full week); set this if your pool uses N = number of games")
 
     g = p.add_argument_group("output")
     g.add_argument("--format", choices=["table", "markdown", "csv", "json"], default="table")
